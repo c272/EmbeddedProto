@@ -34,6 +34,7 @@
 #include "ReadBufferInterface.h"
 
 #include <cstdint>
+#include <algorithm>
 
 namespace EmbeddedProto
 {
@@ -56,7 +57,7 @@ namespace EmbeddedProto
           \param buffer The actual data buffer from which the bytes are obtained.
           \param size The maximum number of bytes to return from buffer.
         */
-        ReadBufferSection::ReadBufferSection(ReadBufferInterface &buffer, const uint32_t size)
+        ReadBufferSection(ReadBufferInterface &buffer, const uint32_t size)
             : buffer_(buffer),
               size_(std::min(size, buffer.get_size())),
               max_size_(std::min(size, buffer.get_size()))

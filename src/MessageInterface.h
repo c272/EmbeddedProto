@@ -33,6 +33,7 @@
 
 #include "WireFormatter.h"
 #include "Fields.h"
+#include "ReadBufferSection.h"
 #include "Errors.h"
 
 #include <cstdint>
