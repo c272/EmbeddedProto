@@ -3,8 +3,8 @@
  *
  *  This file is part of Embedded Proto.
  *
- *  Embedded Proto is open source software: you can redistribute it and/or 
- *  modify it under the terms of the GNU General Public License as published 
+ *  Embedded Proto is open source software: you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License as published
  *  by the Free Software Foundation, version 3 of the license.
  *
  *  Embedded Proto  is distributed in the hope that it will be useful,
@@ -37,52 +37,151 @@
 
 #include <cstdint>
 
-
-namespace EmbeddedProto 
+namespace EmbeddedProto
 {
 
-class MessageInterface : public ::EmbeddedProto::Field
-{
-  public:
+    class MessageInterface : public ::EmbeddedProto::Field
+    {
+    public:
+        MessageInterface() = default;
 
-    MessageInterface() = default;
+        ~MessageInterface() override = default;
 
-    ~MessageInterface() override = default;
+        //! \see Field::serialize_with_id()
+        Error serialize_with_id(uint32_t field_number,
+                                ::EmbeddedProto::WriteBufferInterface &buffer,
+                                const bool optional) const final
+        {
+            Error return_value = Error::NO_ERRORS;
 
-    //! \see Field::serialize_with_id()
-    Error serialize_with_id(uint32_t field_number, 
-                            ::EmbeddedProto::WriteBufferInterface& buffer,
-                            const bool optional) const final;
+            // See if we have data which should be serialized.
+            const uint32_t size_x = this->serialized_size();
+            if ((0 < size_x) || optional)
+            {
+                uint32_t tag = WireFormatter::MakeTag(field_number,
+                                                      WireFormatter::WireType::LENGTH_DELIMITED);
+                return_value = WireFormatter::SerializeVarint(tag, buffer);
 
-    //! \see Field::deserialize()
-    Error deserialize(::EmbeddedProto::ReadBufferInterface& buffer) override = 0;
+                if (Error::NO_ERRORS == return_value)
+                {
+                    return_value = WireFormatter::SerializeVarint(size_x, buffer);
+                    if (Error::NO_ERRORS == return_value)
+                    {
+                        // See if there is enough space left in the buffer for the data.
+                        if (size_x <= buffer.get_available_size())
+                        {
+                            const auto *base = static_cast<const ::EmbeddedProto::Field *>(this);
+                            return_value = base->serialize(buffer);
+                        }
+                        else
+                        {
+                            return_value = Error::BUFFER_FULL;
+                        }
+                    }
+                }
+            }
+            return return_value;
+        }
 
-    //! \see Field::deserialize()
-    Error deserialize_check_type(::EmbeddedProto::ReadBufferInterface& buffer, 
-                                 const ::EmbeddedProto::WireFormatter::WireType& wire_type) final;
+        //! \see Field::deserialize()
+        Error deserialize(::EmbeddedProto::ReadBufferInterface &buffer) override = 0;
 
-    //! Clear the content of this message and set it to it's default state.
-    /*!
-        The defaults are to be set according to the Protobuf standard.
-    */
-    void clear() override = 0;
-    
+        //! \see Field::deserialize()
+        Error deserialize_check_type(::EmbeddedProto::ReadBufferInterface &buffer,
+                                     const ::EmbeddedProto::WireFormatter::WireType &wire_type) final
+        {
+            Error return_value = ::EmbeddedProto::WireFormatter::WireType::LENGTH_DELIMITED == wire_type
+                                     ? Error::NO_ERRORS
+                                     : Error::INVALID_WIRETYPE;
+            if (Error::NO_ERRORS == return_value)
+            {
+                uint32_t size = 0;
+                return_value = ::EmbeddedProto::WireFormatter::DeserializeVarint(buffer, size);
+                ::EmbeddedProto::ReadBufferSection bufferSection(buffer, size);
+                if (::EmbeddedProto::Error::NO_ERRORS == return_value)
+                {
+                    return_value = deserialize(bufferSection);
+                }
+            }
+            return return_value;
+        }
 
-  protected:
-    //! When deserializing skip the bytes in the buffer of an unknown field.
-    /*! 
-        This function is used when a field with an unknown id is encountered to move through the 
-        buffer to the next tag.
-    */
-    Error skip_unknown_field(::EmbeddedProto::ReadBufferInterface& buffer, 
-                             const ::EmbeddedProto::WireFormatter::WireType& wire_type) const;
+        //! Clear the content of this message and set it to it's default state.
+        /*!
+            The defaults are to be set according to the Protobuf standard.
+        */
+        void clear() override = 0;
 
-    Error skip_varint(::EmbeddedProto::ReadBufferInterface& buffer) const;
-    Error skip_fixed32(::EmbeddedProto::ReadBufferInterface& buffer) const;
-    Error skip_fixed64(::EmbeddedProto::ReadBufferInterface& buffer) const;
-    Error skip_length_delimited(::EmbeddedProto::ReadBufferInterface& buffer) const;
+    protected:
+        //! When deserializing skip the bytes in the buffer of an unknown field.
+        /*!
+            This function is used when a field with an unknown id is encountered to move through the
+            buffer to the next tag.
+        */
+        Error skip_unknown_field(::EmbeddedProto::ReadBufferInterface &buffer,
+                                 const ::EmbeddedProto::WireFormatter::WireType &wire_type) const
+        {
+            Error return_value = Error::NO_ERRORS;
 
-};
+            // Depending on the wire type select one of its valid variable types and deserialize the value.
+            switch (wire_type)
+            {
+            case ::EmbeddedProto::WireFormatter::WireType::VARINT:
+                return_value = skip_varint(buffer);
+                break;
+
+            case ::EmbeddedProto::WireFormatter::WireType::FIXED64:
+                return_value = skip_fixed64(buffer);
+                break;
+
+            case ::EmbeddedProto::WireFormatter::WireType::LENGTH_DELIMITED:
+                return_value = skip_length_delimited(buffer);
+                break;
+
+            case ::EmbeddedProto::WireFormatter::WireType::FIXED32:
+                return_value = skip_fixed32(buffer);
+                break;
+
+            default:
+                // We should never get here. DeserializeTag catches this case.
+                break;
+            }
+
+            return return_value;
+        }
+
+        Error skip_varint(::EmbeddedProto::ReadBufferInterface &buffer) const
+        {
+            // Use a 64 bit variable to decode the maximum possible number of bytes. As we do not know
+            // the actual type.
+            uint64_t dummy;
+            return ::EmbeddedProto::WireFormatter::DeserializeVarint(buffer, dummy);
+        }
+
+        Error skip_fixed32(::EmbeddedProto::ReadBufferInterface &buffer) const
+        {
+            float dummy;
+            return ::EmbeddedProto::WireFormatter::DeserializeFloat(buffer, dummy);
+        }
+
+        Error skip_fixed64(::EmbeddedProto::ReadBufferInterface &buffer) const
+        {
+            double dummy;
+            return ::EmbeddedProto::WireFormatter::DeserializeDouble(buffer, dummy);
+        }
+
+        Error skip_length_delimited(::EmbeddedProto::ReadBufferInterface &buffer) const
+        {
+            // First read the number of bytes
+            uint32_t n_bytes = 0;
+            const Error return_value = ::EmbeddedProto::WireFormatter::DeserializeVarint(buffer, n_bytes);
+            if (Error::NO_ERRORS == return_value)
+            {
+                buffer.advance(n_bytes);
+            }
+            return return_value;
+        }
+    };
 
 } // End of namespace EmbeddedProto
 

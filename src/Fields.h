@@ -95,7 +95,12 @@ namespace EmbeddedProto
       /*!
           \return The number of bytes this message will require once serialized.
       */
-      uint32_t serialized_size() const;
+      uint32_t Field::serialized_size() const
+      {
+        ::EmbeddedProto::MessageSizeCalculator calcBuffer;
+        this->serialize(calcBuffer);
+        return calcBuffer.get_size();
+      }
 
       //! Reset the field to it's initial value.
       virtual void clear() = 0;
